@@ -1,0 +1,39 @@
+{
+  "name": "@attestto/x509-core",
+  "version": "0.1.0",
+  "description": "Low-level ASN.1 DER parsing and generic X.509 certificate field extraction. Zero crypto, zero runtime dependencies.",
+  "homepage": "https://attestto.org",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" },
+    "./asn1": { "import": "./dist/asn1-parser.js", "types": "./dist/asn1-parser.d.ts" },
+    "./certificate": { "import": "./dist/certificate-core.js", "types": "./dist/certificate-core.d.ts" }
+  },
+  "files": ["dist", "LICENSE", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint src",
+    "format": "prettier --write 'src/**/*.ts'",
+    "format:check": "prettier --check 'src/**/*.ts'",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run lint && npm test && npm run build"
+  },
+  "keywords": ["x509", "asn1", "der", "certificate", "pkcs7", "parser"],
+  "author": "Attestto <hello@attestto.com>",
+  "license": "Apache-2.0",
+  "dependencies": {},
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/node": "^25.5.2",
+    "eslint": "^9.0.0",
+    "prettier": "^3.8.1",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^3.2.4"
+  },
+  "repository": { "type": "git", "url": "https://github.com/Attestto-com/attestto-x509-core.git" }
+}
