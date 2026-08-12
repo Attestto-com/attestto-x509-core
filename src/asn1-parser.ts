@@ -99,6 +99,20 @@ export function parseAsn1(data: Uint8Array, offset = 0): Asn1Node {
 
 /**
  * Parse all top-level nodes from a byte range (for parsing certificate sets).
+ *
+ * SOC-199. This used to `break` unconditionally at the end of its first
+ * iteration, so it returned at most one node for any input while its name,
+ * its doc comment and its array return type all said otherwise. A caller
+ * handed a certificate SET would have silently processed only the first
+ * certificate. It shipped in 0.1.0 with no test coverage at all.
+ *
+ * The offset arithmetic was never the problem. `parseAsn1` takes an absolute
+ * offset into `data` and returns an absolute `contentOffset`, so
+ * `contentOffset - offset` is the header size and the advance below is
+ * correct — it is the same formula `parseAsn1` already uses for its own
+ * children. The comment that claimed the offsets needed recalculating for a
+ * subarray was describing a bug that did not exist, and the `break` it
+ * justified was the one that did.
  */
 export function parseAsn1All(data: Uint8Array): Asn1Node[] {
   const nodes: Asn1Node[] = []
@@ -106,11 +120,11 @@ export function parseAsn1All(data: Uint8Array): Asn1Node[] {
   while (offset < data.length) {
     const node = parseAsn1(data, offset)
     nodes.push(node)
-    const headerSize = node.contentOffset - offset
-    offset += headerSize + node.contentLength
-    // Fix: parseAsn1 returns contentOffset relative to the passed data's start in memory
-    // We need to recalculate based on the subarray
-    break // For top-level, parse one at a time
+    const totalSize = node.contentOffset - offset + node.contentLength
+    // Same guard as parseAsn1's child loop: a malformed header that does not
+    // advance would otherwise spin forever on a caller-supplied buffer.
+    if (totalSize <= 0) break
+    offset += totalSize
   }
   return nodes
 }
