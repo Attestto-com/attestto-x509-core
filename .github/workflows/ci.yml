@@ -23,6 +23,14 @@ jobs:
 
       - run: npm ci
 
+      # Runs FIRST and deliberately: it proves the gates below can fail, by
+      # seeding a violation of each one and requiring a non-zero exit. Every
+      # blocker found in the 2026-08-11 audit was a control that existed and
+      # had never executed, so "the step is present" stopped counting as
+      # evidence. See scripts/gate-self-test.mjs.
+      - name: Gate self-test
+        run: npm run gate-self-test
+
       - name: Lint
         run: npm run lint
 
