@@ -1,6 +1,14 @@
 /** @vitest-environment node */
 import { describe, it, expect } from 'vitest'
-import { parseAsn1, decodeOid, decodeString, decodeInteger, findChild, findContext } from '../src/asn1-parser.js'
+import {
+  parseAsn1,
+  parseAsn1All,
+  decodeOid,
+  decodeString,
+  decodeInteger,
+  findChild,
+  findContext,
+} from '../src/asn1-parser.js'
 
 describe('asn1-parser', () => {
   describe('parseAsn1 — basic structures', () => {
@@ -133,6 +141,65 @@ describe('asn1-parser', () => {
       const ctx = findContext(parent, 0)
       expect(ctx).toBeDefined()
       expect(ctx!.tagNumber).toBe(0)
+    })
+  })
+
+  // SOC-199. `parseAsn1All` is documented "parse all top-level nodes from a
+  // byte range (for parsing certificate sets)" and returns an array, but it
+  // `break`ed unconditionally on the first iteration, so it returned at most
+  // one node for any input. It shipped in 0.1.0 with no coverage at all.
+  //
+  // Every case below that expects more than one node fails against the
+  // pre-fix implementation. A single-element fixture does not: it passes
+  // either way, which is how a function that parses one of N was mistaken
+  // for one that parses N.
+  describe('parseAsn1All — SOC-199', () => {
+    it('parses THREE concatenated INTEGERs, not just the first', () => {
+      // 02 01 05 | 02 01 06 | 02 01 07
+      const data = new Uint8Array([0x02, 0x01, 0x05, 0x02, 0x01, 0x06, 0x02, 0x01, 0x07])
+      const nodes = parseAsn1All(data)
+      expect(nodes).toHaveLength(3)
+      expect(nodes.map((n) => n.content[0])).toEqual([5, 6, 7])
+    })
+
+    it('parses a certificate-SET shape: two concatenated SEQUENCEs', () => {
+      // 30 03 02 01 01 | 30 03 02 01 02
+      const data = new Uint8Array([
+        0x30, 0x03, 0x02, 0x01, 0x01,
+        0x30, 0x03, 0x02, 0x01, 0x02,
+      ])
+      const nodes = parseAsn1All(data)
+      expect(nodes).toHaveLength(2)
+      expect(nodes.every((n) => n.tag === 0x30)).toBe(true)
+      expect(nodes.map((n) => n.children[0].content[0])).toEqual([1, 2])
+    })
+
+    it('reports the correct nodeStart for every element after the first', () => {
+      const data = new Uint8Array([0x02, 0x01, 0x05, 0x02, 0x01, 0x06, 0x02, 0x01, 0x07])
+      expect(parseAsn1All(data).map((n) => n.nodeStart)).toEqual([0, 3, 6])
+    })
+
+    it('advances correctly past a long-form length header', () => {
+      // 04 81 80 <128 bytes> | 02 01 09
+      const long = new Uint8Array([0x04, 0x81, 0x80, ...new Array(128).fill(0xaa), 0x02, 0x01, 0x09])
+      const nodes = parseAsn1All(long)
+      expect(nodes).toHaveLength(2)
+      expect(nodes[0].contentLength).toBe(128)
+      expect(nodes[1].content[0]).toBe(9)
+    })
+
+    it('returns a single node for a single element (control — passes either way)', () => {
+      expect(parseAsn1All(new Uint8Array([0x02, 0x01, 0x05]))).toHaveLength(1)
+    })
+
+    it('returns an empty array for empty input', () => {
+      expect(parseAsn1All(new Uint8Array([]))).toEqual([])
+    })
+
+    it('terminates on a zero-length element rather than looping forever', () => {
+      // 05 00 (NULL) twice: a zero-content element must still advance by its header
+      const nodes = parseAsn1All(new Uint8Array([0x05, 0x00, 0x05, 0x00]))
+      expect(nodes).toHaveLength(2)
     })
   })
 })
