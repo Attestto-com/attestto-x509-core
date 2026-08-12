@@ -106,7 +106,24 @@ if (!check(existsSync(workflowAbs), `${workflowPath} does not exist — this rep
 }
 
 const workflow = readFileSync(workflowAbs, 'utf-8')
-const triggers = workflow.slice(0, workflow.search(/^jobs:/m))
+
+/**
+ * The workflow with its comment lines removed.
+ *
+ * Every assertion below looks for a pattern that a comment ABOUT that pattern
+ * necessarily contains. Scanning the raw file made this script fail against the
+ * very repos whose comments explained the defect being asserted on: a note
+ * reading "the previous `npm ci` could never install" was read as an `npm ci`
+ * step, and a note explaining why `continue-on-error: true` was removed was
+ * read as it still being there. A checker that reddens because someone
+ * documented the fix teaches people to delete the documentation.
+ */
+const code = workflow
+  .split('\n')
+  .map((line) => (/^\s*#/.test(line) ? '' : line))
+  .join('\n')
+
+const triggers = code.slice(0, code.search(/^jobs:/m))
 
 // A step is worthless on a branch CI never hears about. `branches: [main]`
 // meant a PR whose base was another feature branch ran no job at all, so every
@@ -124,20 +141,20 @@ for (const line of branchFilters) {
 // job. They are how a red step becomes a green check without anyone deciding
 // to remove it.
 check(
-  !/continue-on-error:\s*true/.test(workflow),
+  !/continue-on-error:\s*true/.test(code),
   `${workflowPath} has continue-on-error: true — that step cannot fail the build`,
 )
-const swallowed = (workflow.match(/^\s*run:.*\|\|\s*true\s*$/gm) ?? []).map((l) => l.trim())
+const swallowed = (code.match(/^\s*run:.*\|\|\s*true\s*$/gm) ?? []).map((l) => l.trim())
 check(
   swallowed.length === 0,
   `${workflowPath} swallows exit codes with \`|| true\`: ${swallowed.join(' / ')}`,
 )
 
 // The install command must match the lockfile that is actually here.
-if (/npm ci\b/.test(workflow)) {
+if (/^\s*(?:-\s+)?run:.*\bnpm ci\b/m.test(code)) {
   check(hasNpmLock, `${workflowPath} runs \`npm ci\` but there is no package-lock.json — install fails on every run`)
 }
-if (/pnpm (install|i)\b/.test(workflow)) {
+if (/^\s*(?:-\s+)?run:.*\bpnpm (?:install|i)\b/m.test(code)) {
   check(hasPnpmLock, `${workflowPath} installs with pnpm but there is no pnpm-lock.yaml`)
 }
 
@@ -146,13 +163,17 @@ if (/pnpm (install|i)\b/.test(workflow)) {
 const testScript = config.testScript ?? 'test'
 const buildScript = config.buildScript ?? 'build'
 const runsScript = (name) =>
-  new RegExp(`^\\s*run:.*\\b(?:npm|pnpm|yarn)\\s+(?:run\\s+)?${escape(name)}\\b`, 'm')
+  // `- run: pnpm test` and `        run: npm test` are the same step written
+  // two ways. Anchoring on `run:` alone missed every inline form, so this
+  // script reported "never runs test" about a workflow whose test step was
+  // right there. Found by running it against vc-sdk.
+  new RegExp(`^\\s*(?:-\\s+)?run:.*\\b(?:npm|pnpm|yarn)\\s+(?:run\\s+)?${escape(name)}\\b`, 'm')
 
-const testAt = workflow.search(runsScript(testScript))
+const testAt = code.search(runsScript(testScript))
 check(testAt >= 0, `${workflowPath} never runs \`${testScript}\` — every suite in this repo is decorative`)
 
 if (pkg.scripts?.[buildScript]) {
-  const buildAt = workflow.search(runsScript(buildScript))
+  const buildAt = code.search(runsScript(buildScript))
   if (buildAt >= 0 && testAt >= 0) {
     check(testAt < buildAt, `${workflowPath} builds before it tests; the failure should land on the cheaper step`)
   }
@@ -162,7 +183,7 @@ if (pkg.scripts?.[buildScript]) {
 // can run is one nobody runs.
 for (const gate of config.gates ?? []) {
   check(
-    workflow.search(runsScript(gate.script)) >= 0,
+    code.search(runsScript(gate.script)) >= 0,
     `${workflowPath} never runs \`${gate.script}\`, so that gate protects nothing on a pull request`,
   )
 }
@@ -170,7 +191,7 @@ for (const gate of config.gates ?? []) {
 // This file must itself be wired in, or it is one more control that exists and
 // never executes — which would be a joke it is not worth making.
 check(
-  workflow.search(runsScript('gate-self-test')) >= 0,
+  code.search(runsScript('gate-self-test')) >= 0,
   `${workflowPath} never runs \`gate-self-test\`, so the gates stop being checked the moment one is removed`,
 )
 
@@ -184,12 +205,22 @@ if (existsSync(tsconfigPath)) {
   const raw = readFileSync(tsconfigPath, 'utf-8')
   const excludesTests = /"exclude"\s*:\s*\[[^\]]*"[^"]*(tests?|__tests__|spec)[^"]*"/s.test(raw)
   if (excludesTests) {
+    const referenced = code.match(/tsconfig\.(?:test|spec)\.json/)?.[0]
     check(
-      /tsconfig\.(test|spec)\.json/.test(workflow) ||
-        existsSync(resolve(ROOT, 'tests/tsconfig.json')),
+      Boolean(referenced) || existsSync(resolve(ROOT, 'tests/tsconfig.json')),
       'tsconfig.json excludes the tests and nothing type-checks them separately — ' +
         'a type error inside a spec is invisible',
     )
+    // The step naming a config is not the same as the config existing. Deleting
+    // the file leaves the step in place, and the difference between "this gate
+    // is gone" and "this gate errors for an unrelated reason" is exactly the
+    // kind of red people learn to scroll past.
+    if (referenced) {
+      check(
+        existsSync(resolve(ROOT, referenced)),
+        `${workflowPath} type-checks with ${referenced}, which does not exist`,
+      )
+    }
   }
 }
 
