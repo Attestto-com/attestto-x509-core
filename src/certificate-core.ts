@@ -290,12 +290,15 @@ function parseCertificateNode(node: Asn1Node): CertificateInfo | null {
     }
   }
 
-  // subject Name
-  const subjectNode = tbs.children[idx++]
+  // subject Name. Read without advancing: this is the last positional field
+  // this parser wants. Next in the TBSCertificate would be subjectPublicKeyInfo,
+  // which is not read here, and extensions are located below by their context
+  // tag rather than by position, so nothing reads `idx` again. Two dead
+  // advances used to sit here; eslint 10 promoted `no-useless-assignment`,
+  // which is what surfaced them. Anyone resuming the positional walk must
+  // start from `idx + 1` (subjectPublicKeyInfo).
+  const subjectNode = tbs.children[idx]
   const subjectFields = subjectNode ? parseRdnSequence(subjectNode) : {}
-
-  // Skip subjectPublicKeyInfo
-  idx++
 
   // Parse extensions [3] for BasicConstraints, policies, SAN, key usage
   let isCa = false
