@@ -1,0 +1,48 @@
+name: CI
+
+# Every branch and every pull request. A gate that only covers the last hop
+# into main is not a gate: the same narrow trigger let 37 commits reach
+# attestto-creds-extension ungated, and let a stacked PR merge unchecked in
+# attestto-did-resolver.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: ['**']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      # Runs AFTER the tests, so a failure lands on the cheapest step first.
+      - name: Build
+        run: npm run build
+
+      # This package is published to npm and sits under @attestto/tls-audit,
+      # which sits under the public attestto-creds-extension. A tarball that
+      # omits dist/ breaks that whole chain, and `npm publish` is the wrong
+      # place to discover it.
+      #
+      # `npm pack`, NOT `npm publish --dry-run`: the latter also checks the
+      # registry and fails with "You cannot publish over the previously
+      # published versions" for any version already released — which is the
+      # normal state of main and would leave this red forever. Caught by
+      # running it locally first. `pack` validates the same file list without
+      # asking the registry anything.
+      - name: Validate the publishable tarball
+        run: npm pack --dry-run
